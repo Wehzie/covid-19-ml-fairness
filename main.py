@@ -101,35 +101,48 @@ def diff(a, b):
 def div(a, b):
     return a/b
 
-def metrics(X, y, t = TARGET, pos_label = 1):
+def metrics(X, y, t = TARGET, pos_label = 0):
     data = pd.concat([X, y], axis=1)
     def gender(func):
-        group1 = data.loc[data['sex_female'] == 1][t].value_counts()[pos_label]
-        base1 = len(data.loc[data['sex_female'] == 1])
-        group2 = data.loc[data['sex_male'] == 1][t].value_counts()[pos_label]
-        base2 = len(data.loc[data['sex_male'] == 1])
+        #unpriv = data.loc[data['sex'] == 1]
+        #print(sum(unpriv[t] == pos_label))
+        group1 = data.loc[data['sex'] == 1][t].value_counts()[pos_label] # cheap|woman
+        base1 = len(data.loc[data['sex'] == 1])
+        group2 = data.loc[data['sex'] == 0][t].value_counts()[pos_label] # cheap|man
+        base2 = len(data.loc[data['sex'] == 0])
         return func((group1/base1), (group2/base2))
     def smoking(func):
         group1 = data.loc[data["smoking"] == 0][t].value_counts()[pos_label]
         base1 = len(data.loc[data["smoking"] == 0])
-        group2 = data.loc[data["smoking"] == 1][t].value_counts()[pos_label]
+        # infinity means approaches zero -> very unfair
+        group2 = data.loc[data["smoking"] == 1][t].value_counts().reindex(data.smoking.unique(), fill_value=0)[pos_label]
         base2 = len(data.loc[data["smoking"] == 1])
-        return func((group1/base1), (group2/base2))
+        return func((group2/base2), (group1/base1))
     def background(func):
         group1 = data.loc[data["background_diseases_binary"] == 0][t].value_counts()[pos_label]
+        print("healthy cheap", group1)
         base1 = len(data.loc[data['background_diseases_binary'] == 0])
+        print("healthy", base1)
         group2 = data.loc[data["background_diseases_binary"] == 1][t].value_counts()[pos_label]
+        print("ill cheap", group2)
         base2 = len(data.loc[data['background_diseases_binary'] == 1])
-        return func((group1/base1), (group2/base2))
+        print("ill", base2)
+        return func((group2/base2), (group1/base1))
     def age(func):
-        group1 = data.loc[data["age"] < 70][t].value_counts()[pos_label]
-        base1 = len(data.loc[data["age"] < 70])
-        group2 = data.loc[data["age"] >= 70][t].value_counts()[pos_label]
-        base2 = len(data.loc[data["age"] >= 70])
-        return func((group1/base1), (group2/base2))
+        group1 = data.loc[data["age"] == 0][t].value_counts()[pos_label]
+        base1 = len(data.loc[data["age"] == 0])
+        group2 = data.loc[data["age"] == 1][t].value_counts()[pos_label]
+        base2 = len(data.loc[data["age"] == 1])
+        return func((group2/base2), (group1/base1))
+    def country(func):
+        group1 = data.loc[data["country"] == 0][t].value_counts()[pos_label]
+        base1 = len(data.loc[data["country"] == 0])
+        group2 = data.loc[data["country"] == 1][t].value_counts()[pos_label]
+        base2 = len(data.loc[data["country"] == 1])
+        return func((group2/base2), (group1/base1))
         
-    return (gender(diff), smoking(diff), background(diff), age(diff),
-            gender(div), smoking(div), background(div), age(div),)
+    return (gender(diff), smoking(diff), background(diff), age(diff), country(diff),
+            gender(div), smoking(div), background(div), age(div), country(div))
 
 
 
@@ -152,25 +165,25 @@ def main(tn = TARGET_NAMES):
 
     print(X_train)
 
-    # age old >= 70, age young < 70
-    
     print(classification_report(y_true=y_test, y_pred=labels, zero_division=0, target_names=tn))
 
     # METRICS
-    (mean_diff_gender, mean_diff_smoking, mean_diff_background, mean_diff_age,
-    imp_ratio_gender, imp_ratio_smoking, imp_ratio_background, imp_ratio_age,) = metrics(X, y)
+    (mean_diff_gender, mean_diff_smoking, mean_diff_background, mean_diff_age, mean_diff_country,
+    imp_ratio_gender, imp_ratio_smoking, imp_ratio_background, imp_ratio_age, imp_ratio_country,) = metrics(X, y)
     print("mean_diff_gender:", mean_diff_gender)
     print("mean_diff_smoking:", mean_diff_smoking)
     print("mean_diff_background:", mean_diff_background)
     print("mean_diff_age:", mean_diff_age)
+    print("mean_diff_country:", mean_diff_country)
 
     print("imp_ratio_gender:", imp_ratio_gender)
     print("imp_ratio_smoking:", imp_ratio_smoking)
     print("imp_ratio_background:", imp_ratio_background)
     print("imp_ratio_age:", imp_ratio_age)
+    print("imp_ratio_country:", imp_ratio_country)
 
-    print("base_rate:", metrics.base_rate(y_true=y_test, y_pred=labels, pos_label=0))
-    print("false_negative_error:", metrics.false_negative_rate_error(y_true=y_test, y_pred=labels, pos_label=0))
-    print("false_positive_rate_error", metrics.false_positive_rate_error(y_true=y_test, y_pred=labels, pos_label=0))
+    #print("base_rate:", metrics.base_rate(y_true=y_test, y_pred=labels, pos_label=0))
+    #print("false_negative_error:", metrics.false_negative_rate_error(y_true=y_test, y_pred=labels, pos_label=0))
+    #print("false_positive_rate_error", metrics.false_positive_rate_error(y_true=y_test, y_pred=labels, pos_label=0))
 
 main()
