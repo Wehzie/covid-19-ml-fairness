@@ -79,7 +79,7 @@ def clean_data(data) -> pd.DataFrame:
     data.replace(0.75, 1, inplace=True) # we found this weird entry after long debugging
     return data
 
-def apply_fairness(data, protected: str, target = TARGET) -> pd.DataFrame:
+def get_fairness_weights(data, protected: str, target = TARGET) -> pd.DataFrame:
     """apply pre-processing fairness by dropping the protected attribute"""
     # num smokers * num cheap
     denominator_right = len(data[(data[protected] == 1) & (data[target] == 0)])
@@ -110,6 +110,10 @@ def apply_fairness(data, protected: str, target = TARGET) -> pd.DataFrame:
 
     return data
 
+def apply_weights(data):
+    data["smoking"] = data["smoking"] * data["smoking_weights"]
+    return data
+
 def split_train_test(X, y, split = TRAIN_TEST_SPLIT, seed = SEED) -> tuple:
     """split into train and test set"""
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=split, random_state=seed)
@@ -121,10 +125,12 @@ def fit_model(X_train, y_train, n = NEIGHBORS) -> object:
     model.fit(X_train, y_train)
     return model
 
-def test_model(X_test, model) -> np.ndarray:
-    labels = model.predict(X_test)
+def test_model(X_test, model, y_test) -> np.ndarray:
+    #labels = model.predict(X_test)
     # probs = model.predict_proba(X_test)
-    # accuracy = model.score(X_test, y_test)
+    accuracy = model.score(X_test, y_test)
+    print(accuracy)
+    exit()
     return labels
 
 def diff(a, b):
@@ -145,8 +151,8 @@ def metrics(X, y, t = TARGET, pos_label = 0):
         group1 = data.loc[data["smoking"] == 0][t].value_counts()[pos_label]
         base1 = len(data.loc[data["smoking"] == 0])
         # infinity means approaches zero -> very unfair
-        group2 = data.loc[data["smoking"] == 1][t].value_counts().reindex(data.smoking.unique(), fill_value=0)[pos_label]
-        base2 = len(data.loc[data["smoking"] == 1])
+        group2 = data.loc[data["smoking"] != 0][t].value_counts().reindex(data.smoking.unique(), fill_value=0)[pos_label]
+        base2 = len(data.loc[data["smoking"] != 0])
         return func((group2/base2), (group1/base1))
     def background(func):
         group1 = data.loc[data["background_diseases_binary"] == 0][t].value_counts()[pos_label]
@@ -160,6 +166,43 @@ def metrics(X, y, t = TARGET, pos_label = 0):
         group2 = data.loc[data["age"] == 1][t].value_counts()[pos_label]
         base2 = len(data.loc[data["age"] == 1])
         return func((group2/base2), (group1/base1))
+    def country(func):
+        group1 = data.loc[data["country"] == 0][t].value_counts()[pos_label]
+        base1 = len(data.loc[data["country"] == 0])
+        group2 = data.loc[data["country"] == 1][t].value_counts()[pos_label]
+        base2 = len(data.loc[data["country"] == 1])
+        return func((group2/base2), (group1/base1))
+        
+    return (gender(diff), smoking(diff), background(diff), age(diff), country(diff),
+            gender(div), smoking(div), background(div), age(div), country(div))
+
+def metrics_test(X, y, t = TARGET, pos_label = 0):
+    data = pd.concat([X, y], axis=1)
+    def gender(func):
+        group1 = data.loc[data['sex'] == 1][t].value_counts()[pos_label] # cheap|woman
+        base1 = len(data.loc[data['sex'] == 1])
+        group2 = data.loc[data['sex'] == 0][t].value_counts()[pos_label] # cheap|man
+        base2 = len(data.loc[data['sex'] == 0])
+        return func((group2/base2), (group1/base1))
+    def smoking(func):
+        group1 = data.loc[data["smoking"] == 0][t].value_counts()[pos_label]
+        base1 = len(data.loc[data["smoking"] == 0])
+        # infinity means approaches zero -> very unfair
+        group2 = data.loc[data["smoking"] != 0][t].value_counts().reindex(data.smoking.unique(), fill_value=0)[pos_label]
+        base2 = len(data.loc[data["smoking"] != 0])
+        return func((group1/base1), (group2/base2))
+    def background(func):
+        group1 = data.loc[data["background_diseases_binary"] == 0][t].value_counts()[pos_label]
+        base1 = len(data.loc[data['background_diseases_binary'] == 0])
+        group2 = data.loc[data["background_diseases_binary"] == 1][t].value_counts()[pos_label]
+        base2 = len(data.loc[data['background_diseases_binary'] == 1])
+        return func((group2/base2), (group1/base1))
+    def age(func):
+        group1 = data.loc[data["age"] == 0][t].value_counts()[pos_label]
+        base1 = len(data.loc[data["age"] == 0])
+        group2 = data.loc[data["age"] == 1][t].value_counts()[pos_label]
+        base2 = len(data.loc[data["age"] == 1])
+        return func((group1/base1), (group2/base2))
     def country(func):
         group1 = data.loc[data["country"] == 0][t].value_counts()[pos_label]
         base1 = len(data.loc[data["country"] == 0])
@@ -185,25 +228,28 @@ def main(tn = TARGET_NAMES):
     binarize_age(X, PRIV_AGE, UNPRIV_AGE)
     X = clean_data(X)
 
+    # fairness 
     X = pd.concat([X, y], axis=1)
-    X = apply_fairness(X, "smoking", TARGET)
+    X = get_fairness_weights(X, "smoking", TARGET)
     X = X.drop([TARGET], axis=1)
+    X = apply_weights(X)
 
     print(X.columns)
-    X_train, X_test, y_train, y_test = split_train_test(X, y) 
+    X_train, X_test, y_train, y_test = split_train_test(X, y)
     print(X_train)
     
     # train and test
     model = fit_model(X_train, y_train)
-    labels = test_model(X_test, model)
+    labels = test_model(X_test, model, y_test)
     print(classification_report(y_true=y_test, y_pred=labels, zero_division=0, target_names=tn))
 
     # attach protected
     #X = pd.concat([X, protected], axis=1)
 
     # fairness metrics
+    print("####################################### TRAIN SET DISCRIMININATION")
     (mean_diff_gender, mean_diff_smoking, mean_diff_background, mean_diff_age, mean_diff_country,
-    imp_ratio_gender, imp_ratio_smoking, imp_ratio_background, imp_ratio_age, imp_ratio_country,) = metrics(X, y)
+    imp_ratio_gender, imp_ratio_smoking, imp_ratio_background, imp_ratio_age, imp_ratio_country,) = metrics(X_train, y_train)
     print("mean_diff_gender:", mean_diff_gender)
     print("mean_diff_smoking:", mean_diff_smoking)
     print("mean_diff_background:", mean_diff_background)
@@ -215,5 +261,22 @@ def main(tn = TARGET_NAMES):
     print("imp_ratio_background:", imp_ratio_background)
     print("imp_ratio_age:", imp_ratio_age)
     print("imp_ratio_country:", imp_ratio_country)
+    print("")
+
+    print("####################################### TEST SET DISCRIMININATION")
+    (mean_diff_gender, mean_diff_smoking, mean_diff_background, mean_diff_age, mean_diff_country,
+    imp_ratio_gender, imp_ratio_smoking, imp_ratio_background, imp_ratio_age, imp_ratio_country,) = metrics_test(X_test, pd.DataFrame(labels, columns=["severity_illness"]))
+    print("mean_diff_gender:", mean_diff_gender)
+    print("mean_diff_smoking:", mean_diff_smoking)
+    print("mean_diff_background:", mean_diff_background)
+    print("mean_diff_age:", mean_diff_age)
+    print("mean_diff_country:", mean_diff_country)
+
+    print("imp_ratio_gender:", imp_ratio_gender)
+    print("imp_ratio_smoking:", imp_ratio_smoking)
+    print("imp_ratio_background:", imp_ratio_background)
+    print("imp_ratio_age:", imp_ratio_age)
+    print("imp_ratio_country:", imp_ratio_country)
+    print("")
 
 main()
