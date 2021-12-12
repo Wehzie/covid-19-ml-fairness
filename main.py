@@ -7,7 +7,7 @@ from sklearn.neighbors import KNeighborsClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import classification_report
 import aif360.sklearn.metrics as metrics
-from sklearn.utils.sparsefuncs import inplace_column_scale
+
 
 VERBOSE = True # verbose training
 SEED = 123
@@ -65,8 +65,8 @@ def binarize_target(data, pos = TARGET_POS, neg = TARGET_NEG) -> np.ndarray:
     return data
 
 def binarize_country(data, MAIN_COUNTRY, other_countries):
-    data["country"].replace(other_countries, 1, inplace=True)
-    data["country"].replace(MAIN_COUNTRY, 0, inplace=True)
+    data["country"].replace(other_countries, 1.0, inplace=True)
+    data["country"].replace(MAIN_COUNTRY, 0.0, inplace=True)
 
 def binarize_age(data, PRIV_AGE, UNPRIV_AGE):
     data["age"].replace(PRIV_AGE, 0, inplace=True)
@@ -76,6 +76,38 @@ def clean_data(data) -> pd.DataFrame:
     """apply one hot encoding and replace NaN entries"""
     data = pd.get_dummies(data)
     data = data.fillna(0)
+    data.replace(0.75, 1, inplace=True) # we found this weird entry after long debugging
+    return data
+
+def apply_fairness(data, protected: str, target = TARGET) -> pd.DataFrame:
+    """apply pre-processing fairness by dropping the protected attribute"""
+    # num smokers * num cheap
+    denominator_right = len(data[(data[protected] == 1) & (data[target] == 0)])
+    if denominator_right == 0: denominator_right = 1
+    priv_pos = (len(data[protected] == 1) * len(data[target] == 0)) / (len(data) * denominator_right)
+
+    denominator_right = len(data[(data[protected] == 1) & (data[target] == 1)])
+    if denominator_right == 0: denominator_right = 1
+    priv_neg = (len(data[protected] == 1) * len(data[target] == 1)) / (len(data) * denominator_right)
+
+    denominator_right = len(data[(data[protected] == 0) & (data[target] == 0)])
+    if denominator_right == 0: denominator_right = 1
+    unpriv_pos = (len(data[protected] == 0) * len(data[target] == 0)) / (len(data) * denominator_right)
+    
+    denominator_right = len(data[(data[protected] == 0) & (data[target] == 1)])
+    if denominator_right == 0: denominator_right = 1
+    unpriv_neg = (len(data[protected] == 0) * len(data[target] == 1)) / (len(data) * denominator_right)
+
+    weight_list = []
+
+    for index, row in data.iterrows():
+        if row[protected] == 1 and row[target] == 0: weight_list.append(priv_pos)
+        if row[protected] == 1 and row[target] == 1: weight_list.append(priv_neg)
+        if row[protected] == 0 and row[target] == 0: weight_list.append(unpriv_pos)
+        if row[protected] == 0 and row[target] == 1: weight_list.append(unpriv_neg)
+
+    data[protected + "_weights"] = weight_list
+
     return data
 
 def split_train_test(X, y, split = TRAIN_TEST_SPLIT, seed = SEED) -> tuple:
@@ -104,8 +136,6 @@ def div(a, b):
 def metrics(X, y, t = TARGET, pos_label = 0):
     data = pd.concat([X, y], axis=1)
     def gender(func):
-        #unpriv = data.loc[data['sex'] == 1]
-        #print(sum(unpriv[t] == pos_label))
         group1 = data.loc[data['sex'] == 1][t].value_counts()[pos_label] # cheap|woman
         base1 = len(data.loc[data['sex'] == 1])
         group2 = data.loc[data['sex'] == 0][t].value_counts()[pos_label] # cheap|man
@@ -120,13 +150,9 @@ def metrics(X, y, t = TARGET, pos_label = 0):
         return func((group2/base2), (group1/base1))
     def background(func):
         group1 = data.loc[data["background_diseases_binary"] == 0][t].value_counts()[pos_label]
-        print("healthy cheap", group1)
         base1 = len(data.loc[data['background_diseases_binary'] == 0])
-        print("healthy", base1)
         group2 = data.loc[data["background_diseases_binary"] == 1][t].value_counts()[pos_label]
-        print("ill cheap", group2)
         base2 = len(data.loc[data['background_diseases_binary'] == 1])
-        print("ill", base2)
         return func((group2/base2), (group1/base1))
     def age(func):
         group1 = data.loc[data["age"] == 0][t].value_counts()[pos_label]
@@ -158,16 +184,24 @@ def main(tn = TARGET_NAMES):
     binarize_country(X, MAIN_COUNTRY, other_countries)
     binarize_age(X, PRIV_AGE, UNPRIV_AGE)
     X = clean_data(X)
+
+    X = pd.concat([X, y], axis=1)
+    X = apply_fairness(X, "smoking", TARGET)
+    X = X.drop([TARGET], axis=1)
+
     print(X.columns)
     X_train, X_test, y_train, y_test = split_train_test(X, y) 
+    print(X_train)
+    
+    # train and test
     model = fit_model(X_train, y_train)
     labels = test_model(X_test, model)
-
-    print(X_train)
-
     print(classification_report(y_true=y_test, y_pred=labels, zero_division=0, target_names=tn))
 
-    # METRICS
+    # attach protected
+    #X = pd.concat([X, protected], axis=1)
+
+    # fairness metrics
     (mean_diff_gender, mean_diff_smoking, mean_diff_background, mean_diff_age, mean_diff_country,
     imp_ratio_gender, imp_ratio_smoking, imp_ratio_background, imp_ratio_age, imp_ratio_country,) = metrics(X, y)
     print("mean_diff_gender:", mean_diff_gender)
@@ -181,9 +215,5 @@ def main(tn = TARGET_NAMES):
     print("imp_ratio_background:", imp_ratio_background)
     print("imp_ratio_age:", imp_ratio_age)
     print("imp_ratio_country:", imp_ratio_country)
-
-    #print("base_rate:", metrics.base_rate(y_true=y_test, y_pred=labels, pos_label=0))
-    #print("false_negative_error:", metrics.false_negative_rate_error(y_true=y_test, y_pred=labels, pos_label=0))
-    #print("false_positive_rate_error", metrics.false_positive_rate_error(y_true=y_test, y_pred=labels, pos_label=0))
 
 main()
