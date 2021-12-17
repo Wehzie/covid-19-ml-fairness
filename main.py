@@ -12,7 +12,7 @@ import aif360.sklearn.metrics as metrics
 VERBOSE = True # verbose training
 SEED = 123
 NEIGHBORS = 5 # KNN
-NUMBER_OF_ROWS = 110000 # total data rows loaded
+NUMBER_OF_ROWS = 300000 # total data rows loaded
 TRAIN_DATA_PATH = Path("./data_train.csv")
 TRAIN_TEST_SPLIT = 0.6 # 90% train
 COLUMNS = ["age", "country", 
@@ -29,7 +29,7 @@ UNPRIV_GENDER = "female" # 1
 PRIV_AGE = range(70) # 0
 UNPRIV_AGE = range(70, 200) # 1
 APPLYING_FAIRNESS = True
-PROTECTED_ATTRIBUTES = ["smoking", "background_diseases_binary"]
+PROTECTED_ATTRIBUTES = ["country"] # BUG: background can't be made fair, metric static
 # 0 = Unlinking
 # 1 = Reweighing
 FAIRNESS_TYPE = 1
@@ -45,6 +45,8 @@ def get_other_countries(data, MAIN_COUNTRY):
     all_countries.remove(MAIN_COUNTRY)
     return all_countries
 
+# NOTE: this is unfair
+# discussion about fairness framed in binary comparisons 
 def remove_transgender(data) -> None:
     data.drop(data[data.sex == "transgender"].index, inplace=True)
 
@@ -164,9 +166,9 @@ def metrics(X, y, t = TARGET, pos_label = 0):
         return func((group2/base2), (group1/base1))
     def background(func):
         group1 = data.loc[data["background_diseases_binary"] == 0][t].value_counts()[pos_label]
-        base1 = len(data.loc[data['background_diseases_binary'] == 0])
+        base1 = len(data.loc[data["background_diseases_binary"] == 0])
         group2 = data.loc[data["background_diseases_binary"] == 1][t].reindex(data.background_diseases_binary.unique(), fill_value=0)[pos_label]
-        base2 = len(data.loc[data['background_diseases_binary'] == 1])
+        base2 = len(data.loc[data["background_diseases_binary"] == 1])
         return func((group2/base2), (group1/base1))
     def age(func):
         group1 = data.loc[data["age"] == 0][t].value_counts()[pos_label]
@@ -230,7 +232,7 @@ def main(tn = TARGET_NAMES):
 
     # fairness metrics
     if not APPLYING_FAIRNESS:
-        print("####################################### TRAIN SET DISCRIMININATION")
+        print("####################################### TRAIN SET DISCRIMINATION")
         (mean_diff_gender, mean_diff_smoking, mean_diff_background, mean_diff_age, mean_diff_country,
         imp_ratio_gender, imp_ratio_smoking, imp_ratio_background, imp_ratio_age, imp_ratio_country,) = metrics(X_train, y_train)
         print("mean_diff_gender:", mean_diff_gender)
@@ -238,7 +240,7 @@ def main(tn = TARGET_NAMES):
         print("mean_diff_background:", mean_diff_background)
         print("mean_diff_age:", mean_diff_age)
         print("mean_diff_country:", mean_diff_country)
-
+        print("#")
         print("imp_ratio_gender:", imp_ratio_gender)
         print("imp_ratio_smoking:", imp_ratio_smoking)
         print("imp_ratio_background:", imp_ratio_background)
@@ -254,7 +256,7 @@ def main(tn = TARGET_NAMES):
     print("mean_diff_background:", mean_diff_background)
     print("mean_diff_age:", mean_diff_age)
     print("mean_diff_country:", mean_diff_country)
-
+    print("#")
     print("imp_ratio_gender:", imp_ratio_gender)
     print("imp_ratio_smoking:", imp_ratio_smoking)
     print("imp_ratio_background:", imp_ratio_background)
