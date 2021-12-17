@@ -28,7 +28,10 @@ PRIV_GENDER = "male" # 0
 UNPRIV_GENDER = "female" # 1
 PRIV_AGE = range(70) # 0
 UNPRIV_AGE = range(70, 200) # 1
-APPLYING_FAIRNESS = False
+APPLYING_FAIRNESS = True
+# 0 = Unlinking
+# 1 = Reweighing
+FAIRNESS_TYPE = 1
 
 
 def import_data(train_path = TRAIN_DATA_PATH, nrows = NUMBER_OF_ROWS) -> pd.DataFrame:
@@ -112,7 +115,12 @@ def get_fairness_weights(data, protected: str, target = TARGET) -> pd.DataFrame:
     return data
 
 def apply_weights(data):
+    #for col in data.columns:
+    #    data[col] = data[col] * data["smoking_weights"]
+    
     data["smoking"] = data["smoking"] * data["smoking_weights"]
+    
+    #data["smoking"] = data["smoking_weights"]
     return data
 
 def split_train_test(X, y, split = TRAIN_TEST_SPLIT, seed = SEED) -> tuple:
@@ -170,8 +178,8 @@ def metrics(X, y, t = TARGET, pos_label = 0):
         group1 = data.loc[data["smoking"] == 0][t].value_counts()[pos_label]
         base1 = len(data.loc[data["smoking"] == 0])
         # infinity means approaches zero -> very unfair
-        group2 = data.loc[data["smoking"] != 0][t].value_counts().reindex(data.smoking.unique(), fill_value=0)[pos_label]
-        base2 = len(data.loc[data["smoking"] != 0])
+        group2 = data.loc[data["smoking"] == 1][t].value_counts().reindex(data.smoking.unique(), fill_value=0)[pos_label]
+        base2 = len(data.loc[data["smoking"] == 1])
         return func((group2/base2), (group1/base1))
     def background(func):
         group1 = data.loc[data["background_diseases_binary"] == 0][t].value_counts()[pos_label]
@@ -213,14 +221,17 @@ def main(tn = TARGET_NAMES):
     # fairness
     if APPLYING_FAIRNESS:
         print("APPLYING FAIRNESS")
-        rand_smoking = np.random.randint(2, size=len(X_train))
-        X_train["smoking"] = rand_smoking
-
-        #X_train = pd.concat([X_train, y_train], axis=1)
-        #X_train = get_fairness_weights(X_train, "smoking", TARGET)
-        #X_train = X_train.drop([TARGET], axis=1)
-        #X_train = apply_weights(X_train)
-        #X_train = X_train.drop(["smoking_weights"], axis=1)
+        if FAIRNESS_TYPE == 0:
+            print("UNLINKING")
+            rand_smoking = np.random.randint(2, size=len(X_train))
+            X_train["smoking"] = rand_smoking
+        else:
+            print("REWEIGHING")
+            X_train = pd.concat([X_train, y_train], axis=1)
+            X_train = get_fairness_weights(X_train, "smoking", TARGET)
+            X_train = X_train.drop([TARGET], axis=1)
+            X_train = apply_weights(X_train)
+            X_train = X_train.drop(["smoking_weights"], axis=1)
 
     print("TRAIN DATA")
     print(X_train)
